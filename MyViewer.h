@@ -5,6 +5,9 @@
 
 #include <QGLViewer/qglviewer.h>
 #include <OpenMesh/Core/Mesh/TriMesh_ArrayKernelT.hh>
+#include <OpenMesh/Core/Mesh/PolyMesh_ArrayKernelT.hh>
+
+#include <geometry.hh>
 
 using qglviewer::Vec;
 
@@ -22,7 +25,6 @@ public:
   inline double getMeanMax() const;
   inline void setMeanMax(double max);
   bool openMesh(const std::string &filename);
-  bool openBezier(const std::string &filename);
 
 signals:
   void startComputation(QString message);
@@ -46,7 +48,15 @@ private:
       double mean;              // approximated mean curvature
     };
   };
+  struct CageTraits : public OpenMesh::DefaultTraits {
+    using Point  = OpenMesh::Vec3d; // the default would be Vec3f
+    using Normal = OpenMesh::Vec3d;
+    FaceTraits {
+      OpenMesh::Vec3d center;
+    };
+  };
   using MyMesh = OpenMesh::TriMesh_ArrayKernelT<MyTraits>;
+  using CageMesh = OpenMesh::PolyMesh_ArrayKernelT<CageTraits>;
   using Vector = OpenMesh::VectorT<double,3>;
 
   // Mesh
@@ -57,14 +67,14 @@ private:
   void updateMeanMinMax();
   void updateMeanCurvature(bool update_min_max = true);
 
-  // Bezier
-  static void bernsteinAll(size_t n, double u, std::vector<double> &coeff);
+  // XSolid
   void generateMesh();
 
   // Visualization
   void setupCamera();
   Vec meanMapColor(double d) const;
-  void drawControlNet() const;
+  void drawControlCage() const;
+  void drawBoundary() const;
   void drawAxes() const;
   void drawAxesWithNames() const;
   static Vec intersectLines(const Vec &ap, const Vec &ad, const Vec &bp, const Vec &bd);
@@ -76,18 +86,15 @@ private:
   // Member variables //
   //////////////////////
 
-  enum class ModelType { NONE, MESH, BEZIER_SURFACE } model_type;
-
-  // Mesh
+  // Surface data
+  CageMesh cage;
+  Geometry::CurveVector boundaries;
   MyMesh mesh;
-
-  // Bezier
-  size_t degree[2];
-  std::vector<Vec> control_points;
+  size_t resolution;
 
   // Visualization
   double mean_min, mean_max, cutoff_ratio;
-  bool show_control_points, show_solid, show_wireframe;
+  bool show_control_cage, show_boundary, show_solid, show_wireframe;
   enum class Visualization { PLAIN, MEAN, ISOPHOTES } visualization;
   GLuint isophote_texture;
   int selected_vertex;

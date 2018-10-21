@@ -8,3 +8,7 @@ syntax: glob
 moc_*
 qrc_*
 Makefile
+*.xml
+*.obj
+*.so
+sample-framework

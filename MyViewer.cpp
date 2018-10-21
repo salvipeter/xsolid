@@ -10,6 +10,10 @@
 #include <OpenMesh/Core/IO/MeshIO.hh>
 #include <OpenMesh/Tools/Smoother/JacobiLaplaceSmootherT.hh>
 
+#include <GL/gle.h>
+
+#include <surface-midpoint.hh>
+
 // #define BETTER_MEAN_CURVATURE
 
 #ifdef BETTER_MEAN_CURVATURE
@@ -27,9 +31,9 @@
 #endif
 
 MyViewer::MyViewer(QWidget *parent) :
-  QGLViewer(parent), model_type(ModelType::NONE),
+  QGLViewer(parent), resolution(10),
   mean_min(0.0), mean_max(0.0), cutoff_ratio(0.05),
-  show_control_points(true), show_solid(true), show_wireframe(false),
+  show_control_cage(true), show_boundary(true), show_solid(true), show_wireframe(false),
   visualization(Visualization::PLAIN)
 {
   setSelectRegionWidth(10);
@@ -244,22 +248,6 @@ Vec MyViewer::meanMapColor(double d) const {
   return green * (1 - alpha) + red * alpha;
 }
 
-void MyViewer::fairMesh() {
-  if (model_type != ModelType::MESH)
-    return;
-
-  emit startComputation(tr("Fairing mesh..."));
-  OpenMesh::Smoother::JacobiLaplaceSmootherT<MyMesh> smoother(mesh);
-  smoother.initialize(OpenMesh::Smoother::SmootherT<MyMesh>::Normal, // or: Tangential_and_Normal
-                      OpenMesh::Smoother::SmootherT<MyMesh>::C1);
-  for (size_t i = 1; i <= 10; ++i) {
-    smoother.smooth(10);
-    emit midComputation(i * 10);
-  }
-  updateMesh(false);
-  emit endComputation();
-}
-
 void MyViewer::updateVertexNormals() {
   // Weights according to:
   //   N. Max, Weights for computing vertex normals from facet normals.
@@ -282,8 +270,9 @@ void MyViewer::updateVertexNormals() {
 }
 
 void MyViewer::updateMesh(bool update_mean_range) {
-  if (model_type == ModelType::BEZIER_SURFACE)
-    generateMesh();
+  if (axes.shown)
+    return;
+  generateMesh();
   mesh.request_face_normals(); mesh.request_vertex_normals();
   mesh.update_face_normals(); //mesh.update_vertex_normals();
   updateVertexNormals();
@@ -293,10 +282,10 @@ void MyViewer::updateMesh(bool update_mean_range) {
 void MyViewer::setupCamera() {
   // Set camera on the model
   Vector box_min, box_max;
-  box_min = box_max = mesh.point(*mesh.vertices_begin());
-  for (auto v : mesh.vertices()) {
-    box_min.minimize(mesh.point(v));
-    box_max.maximize(mesh.point(v));
+  box_min = box_max = cage.point(*cage.vertices_begin());
+  for (auto v : cage.vertices()) {
+    box_min.minimize(cage.point(v));
+    box_max.maximize(cage.point(v));
   }
   camera()->setSceneBoundingBox(Vec(box_min.data()), Vec(box_max.data()));
   camera()->showEntireScene();
@@ -308,28 +297,8 @@ void MyViewer::setupCamera() {
 }
 
 bool MyViewer::openMesh(const std::string &filename) {
-  if (!OpenMesh::IO::read_mesh(mesh, filename) || mesh.n_vertices() == 0)
+  if (!OpenMesh::IO::read_mesh(cage, filename) || cage.n_vertices() == 0)
     return false;
-  model_type = ModelType::MESH;
-  updateMesh();
-  setupCamera();
-  return true;
-}
-
-bool MyViewer::openBezier(const std::string &filename) {
-  size_t n, m;
-  try {
-    std::ifstream f(filename.c_str());
-    f >> n >> m;
-    degree[0] = n++; degree[1] = m++;
-    control_points.resize(n * m);
-    for (size_t i = 0, index = 0; i < n; ++i)
-      for (size_t j = 0; j < m; ++j, ++index)
-        f >> control_points[index][0] >> control_points[index][1] >> control_points[index][2];
-  } catch(std::ifstream::failure) {
-    return false;
-  }
-  model_type = ModelType::BEZIER_SURFACE;
   updateMesh();
   setupCamera();
   return true;
@@ -349,8 +318,10 @@ void MyViewer::init() {
 }
 
 void MyViewer::draw() {
-  if (model_type == ModelType::BEZIER_SURFACE && show_control_points)
-    drawControlNet();
+  if (show_control_cage)
+    drawControlCage();
+  if (show_boundary)
+    drawBoundary();
 
   glPolygonMode(GL_FRONT_AND_BACK, !show_solid && show_wireframe ? GL_LINE : GL_FILL);
   glEnable(GL_POLYGON_OFFSET_FILL);
@@ -403,30 +374,50 @@ void MyViewer::draw() {
     drawAxes();
 }
 
-void MyViewer::drawControlNet() const {
+void MyViewer::drawControlCage() const {
+  glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
   glDisable(GL_LIGHTING);
   glLineWidth(3.0);
   glColor3d(0.3, 0.3, 1.0);
-  size_t m = degree[1] + 1;
-  for (size_t k = 0; k < 2; ++k)
-    for (size_t i = 0; i <= degree[k]; ++i) {
-      glBegin(GL_LINE_STRIP);
-      for (size_t j = 0; j <= degree[1-k]; ++j) {
-        size_t const index = k ? j * m + i : i * m + j;
-        const auto &p = control_points[index];
-        glVertex3dv(p);
-      }
-      glEnd();
-    }
+  for (auto f : cage.faces()) {
+    glBegin(GL_POLYGON);
+    for (auto v : cage.fv_range(f))
+      glVertex3dv(cage.point(v).data());
+    glEnd();
+  }
   glLineWidth(1.0);
   glPointSize(8.0);
   glColor3d(1.0, 0.0, 1.0);
   glBegin(GL_POINTS);
-  for (const auto &p : control_points)
-    glVertex3dv(p);
+  for (auto v : cage.vertices())
+    glVertex3dv(cage.point(v).data());
   glEnd();
   glPointSize(1.0);
   glEnable(GL_LIGHTING);
+}
+
+void MyViewer::drawBoundary() const {
+  glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+  glColor3d(1.0, 1.0, 0.0);
+  gleDouble radius = 4.0 * camera()->pixelGLRatio(camera()->sceneCenter());
+  std::vector<gleDouble[3]> points(resolution + 2);
+  for (const auto &b : boundaries) {
+    auto p = b->eval(0.0);
+    p = p + (p - b->eval(1.0 / (resolution - 1)));
+    for (size_t j = 0; j < 3; ++j)
+      points[0][j] = p[j];
+    for (size_t i = 0; i < resolution; ++i) {
+      double u = (double)i / (resolution - 1);
+      p = b->eval(u);
+      for (size_t j = 0; j < 3; ++j)
+        points[i+1][j] = p[j];
+    }
+    p = b->eval(1.0);
+    p = p + (p - b->eval((double)(resolution - 2) / (resolution - 1)));
+    for (size_t j = 0; j < 3; ++j)
+      points[resolution+1][j] = p[j];
+    glePolyCylinder(resolution + 2, &points[0], nullptr, radius);
+  }
 }
 
 void MyViewer::drawAxes() const {
@@ -443,28 +434,12 @@ void MyViewer::drawAxes() const {
 void MyViewer::drawWithNames() {
   if (axes.shown)
     return drawAxesWithNames();
-
-  switch (model_type) {
-  case ModelType::NONE: break;
-  case ModelType::MESH:
-    if (!show_wireframe)
-      return;
-    for (auto v : mesh.vertices()) {
-      glPushName(v.idx());
-      glRasterPos3dv(mesh.point(v).data());
-      glPopName();
-    }
-    break;
-  case ModelType::BEZIER_SURFACE:
-    if (!show_control_points)
-      return;
-    for (size_t i = 0, ie = control_points.size(); i < ie; ++i) {
-      Vec const &p = control_points[i];
-      glPushName(i);
-      glRasterPos3fv(p);
-      glPopName();
-    }
-    break;
+  if (!show_control_cage)
+    return;
+  for (auto v : cage.vertices()) {
+    glPushName(v.idx());
+    glRasterPos3dv(cage.point(v).data());
+    glPopName();
   }
 }
 
@@ -485,6 +460,8 @@ void MyViewer::postSelection(const QPoint &p) {
   int sel = selectedName();
   if (sel == -1) {
     axes.shown = false;
+    updateMesh();
+    update();
     return;
   }
 
@@ -499,10 +476,7 @@ void MyViewer::postSelection(const QPoint &p) {
   }
 
   selected_vertex = sel;
-  if (model_type == ModelType::MESH)
-    axes.position = Vec(mesh.point(MyMesh::VertexHandle(sel)).data());
-  if (model_type == ModelType::BEZIER_SURFACE)
-    axes.position = control_points[sel];
+  axes.position = Vec(cage.point(CageMesh::VertexHandle(sel)).data());
   double depth = camera()->projectedCoordinatesOf(axes.position)[2];
   Vec q1 = camera()->unprojectedCoordinatesOf(Vec(0.0, 0.0, depth));
   Vec q2 = camera()->unprojectedCoordinatesOf(Vec(width(), height(), depth));
@@ -527,7 +501,11 @@ void MyViewer::keyPressEvent(QKeyEvent *e) {
       update();
       break;
     case Qt::Key_C:
-      show_control_points = !show_control_points;
+      show_control_cage = !show_control_cage;
+      update();
+      break;
+    case Qt::Key_B:
+      show_boundary = !show_boundary;
       update();
       break;
     case Qt::Key_S:
@@ -538,9 +516,17 @@ void MyViewer::keyPressEvent(QKeyEvent *e) {
       show_wireframe = !show_wireframe;
       update();
       break;
-    case Qt::Key_F:
-      fairMesh();
+    case Qt::Key_Equal:
+      resolution += 5;
+      updateMesh();
       update();
+      break;
+    case Qt::Key_Minus:
+      if (resolution >= 10) {
+        resolution -= 5;
+        updateMesh();
+        update();
+      }
       break;
     default:
       QGLViewer::keyPressEvent(e);
@@ -559,55 +545,69 @@ Vec MyViewer::intersectLines(const Vec &ap, const Vec &ad, const Vec &bp, const 
   return ap + s * ad;
 }
 
-void MyViewer::bernsteinAll(size_t n, double u, std::vector<double> &coeff) {
-  coeff.clear(); coeff.reserve(n + 1);
-  coeff.push_back(1.0);
-  double u1 = 1.0 - u;
-  for (size_t j = 1; j <= n; ++j) {
-    double saved = 0.0;
-    for (size_t k = 0; k < j; ++k) {
-      double tmp = coeff[k];
-      coeff[k] = saved + tmp * u1;
-      saved = tmp * u;
-    }
-    coeff.push_back(saved);
-  }
-}
-
 void MyViewer::generateMesh() {
-  size_t resolution = 30;
+  auto c = cage;                // local copy for the subdivision step
+
+  bool subdivide = false;
+  for (auto f : c.faces()) {
+    size_t count = 0;
+    for (auto v = c.fv_iter(f); v.is_valid(); ++v)
+      ++count;
+    if (count != 4) {
+      subdivide = true;
+      break;
+    }
+  }
+
+  if (subdivide) {
+    // TODO: subdivision step
+    std::cerr << "Non-quadrilateral model!" << std::endl;
+    return;
+  }
+
+  for (auto f : c.faces())
+    c.data(f).center = c.calc_face_centroid(f);
+
+  boundaries.clear();
+  std::map<CageMesh::EdgeHandle, std::shared_ptr<Geometry::BSCurve>> curves;
+  for (auto e : c.edges()) {
+    // auto p = c.calc_edge_midpoint(e); // <- in the new version of OpenMesh
+    auto _heh = c.halfedge_handle(e, 0);
+    auto vh0 = c.from_vertex_handle(_heh);
+    auto vh1 = c.to_vertex_handle(_heh);
+    auto p = 0.5 * (c.point(vh0) + c.point(vh1));
+
+    auto q1 = c.data(c.face_handle(c.halfedge_handle(e, 0))).center;
+    auto q2 = c.data(c.face_handle(c.halfedge_handle(e, 1))).center;
+    Geometry::PointVector pv = {{q1[0], q1[1], q1[2]}, {p[0],  p[1],  p[2]}, {q2[0], q2[1], q2[2]}};
+    auto curve = std::make_shared<Geometry::BSCurve>(pv);
+    curves[e] = curve;
+    boundaries.push_back(curve);
+  }
 
   mesh.clear();
-  std::vector<MyMesh::VertexHandle> handles, tri;
-  size_t n = degree[0], m = degree[1];
-
-  std::vector<double> coeff_u, coeff_v;
-  for (size_t i = 0; i < resolution; ++i) {
-    double u = (double)i / (double)(resolution - 1);
-    bernsteinAll(n, u, coeff_u);
-    for (size_t j = 0; j < resolution; ++j) {
-      double v = (double)j / (double)(resolution - 1);
-      bernsteinAll(m, v, coeff_v);
-      Vec p(0.0, 0.0, 0.0);
-      for (size_t k = 0, index = 0; k <= n; ++k)
-        for (size_t l = 0; l <= m; ++l, ++index)
-          p += control_points[index] * coeff_u[k] * coeff_v[l];
-      handles.push_back(mesh.add_vertex(Vector(static_cast<double *>(p))));
+  for (auto v : c.vertices()) {
+    if (c.is_boundary(v))
+      continue;
+    Geometry::CurveVector cv;
+    for (auto e : c.ve_range(v))
+      cv.push_back(curves[e]);
+    Transfinite::SurfaceMidpoint surf;
+    surf.setCurves(cv);
+    surf.setupLoop();
+    surf.update();
+    auto surf_mesh = surf.eval(resolution);
+    const auto &points = surf_mesh.points();
+    const auto &tris = surf_mesh.triangles();
+    std::vector<MyMesh::VertexHandle> handles, tri(3);
+    for (const auto &p : points)
+      handles.push_back(mesh.add_vertex(Vector(p.data())));
+    for (const auto &t : tris) {
+      for (size_t i = 0; i < 3; ++i)
+        tri[i] = handles[t[i]];
+      mesh.add_face(tri);
     }
   }
-  for (size_t i = 0; i < resolution - 1; ++i)
-    for (size_t j = 0; j < resolution - 1; ++j) {
-      tri.clear();
-      tri.push_back(handles[i * resolution + j]);
-      tri.push_back(handles[i * resolution + j + 1]);
-      tri.push_back(handles[(i + 1) * resolution + j]);
-      mesh.add_face(tri);
-      tri.clear();
-      tri.push_back(handles[(i + 1) * resolution + j]);
-      tri.push_back(handles[i * resolution + j + 1]);
-      tri.push_back(handles[(i + 1) * resolution + j + 1]);
-      mesh.add_face(tri);
-    }
 }
 
 void MyViewer::mouseMoveEvent(QMouseEvent *e) {
@@ -621,44 +621,31 @@ void MyViewer::mouseMoveEvent(QMouseEvent *e) {
   auto p = intersectLines(axes.grabbed_pos, axis, from, dir);
   float d = (p - axes.grabbed_pos) * axis;
   axes.position[axes.selected_axis] = axes.original_pos[axes.selected_axis] + d;
-  if (model_type == ModelType::MESH)
-    mesh.set_point(MyMesh::VertexHandle(selected_vertex),
-                   Vector(static_cast<double *>(axes.position)));
-  if (model_type == ModelType::BEZIER_SURFACE)
-    control_points[selected_vertex] = axes.position;
+  cage.set_point(CageMesh::VertexHandle(selected_vertex),
+                 Vector(static_cast<double *>(axes.position)));
   updateMesh();
   update();
 }
 
 QString MyViewer::helpString() const {
-  QString text("<h2>Sample Framework</h2>"
-               "<p>This is a minimal framework for 3D mesh manipulation, which can be "
-               "extended and used as a base for various projects, for example "
-               "prototypes for fairing algorithms, or even displaying/modifying "
-               "parametric surfaces, etc.</p>"
+  QString text("<h2>XSolid</h2>"
+               "<p>This is a minimal framework for testing the XSolid concept.</p>"
                "<p>The following hotkeys are available:</p>"
                "<ul>"
                "<li>&nbsp;P: Set plain map (no coloring)</li>"
                "<li>&nbsp;M: Set mean curvature map</li>"
                "<li>&nbsp;I: Set isophote line map</li>"
-               "<li>&nbsp;C: Toggle control polygon visualization</li>"
+               "<li>&nbsp;B: Toggle boundary curve visualization</li>"
+               "<li>&nbsp;C: Toggle control cage visualization</li>"
                "<li>&nbsp;S: Toggle solid (filled polygon) visualization</li>"
                "<li>&nbsp;W: Toggle wireframe visualization</li>"
-               "<li>&nbsp;F: Fair mesh</li>"
+               "<li>&nbsp;-: Lower the patch resolution</li>"
+               "<li>&nbsp;=: Raise the patch resolution</li>"
                "</ul>"
                "<p>There is also a simple selection and movement interface, enabled "
-               "only when the wireframe/controlnet is displayed: a mesh vertex can be selected "
+               "only when the control cage is displayed: a control point can be selected "
                "by shift-clicking, and it can be moved by shift-dragging one of the "
                "displayed axes.</p>"
-               "<p>Note that libQGLViewer is furnished with a lot of useful features, "
-               "such as storing/loading view positions, or saving screenshots. "
-               "OpenMesh also has a nice collection of tools for mesh manipulation: "
-               "decimation, subdivision, smoothing, etc. These can provide "
-               "good comparisons to the methods you implement.</p>"
-               "<p>This software can be used as a sample GUI base for handling "
-               "parametric or procedural surfaces, as well. The power of "
-               "Qt and libQGLViewer makes it easy to set up a prototype application. "
-               "Feel free to modify and explore!</p>"
                "<p align=\"right\">Peter Salvi</p>");
   return text;
 }

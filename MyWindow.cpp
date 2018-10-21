@@ -7,7 +7,7 @@
 MyWindow::MyWindow(QApplication *parent) :
   QMainWindow(), parent(parent), last_directory(".")
 {
-  setWindowTitle(tr("Sample 3D Framework"));
+  setWindowTitle(tr("XSolid"));
   setStatusBar(new QStatusBar);
   progress = new QProgressBar;
   progress->setMinimum(0); progress->setMaximum(100);
@@ -58,17 +58,12 @@ void MyWindow::open() {
   auto filename =
     QFileDialog::getOpenFileName(this, tr("Open File"), last_directory,
                                  tr("Mesh (*.obj *.ply *.stl);;"
-                                    "Bézier surface (*.bzr);;"
                                     "All files (*.*)"));
   if(filename.isEmpty())
     return;
   last_directory = QFileInfo(filename).absolutePath();
 
-  bool ok;
-  if (filename.endsWith(".bzr"))
-    ok = viewer->openBezier(filename.toUtf8().data());
-  else
-    ok = viewer->openMesh(filename.toUtf8().data());
+  bool ok = viewer->openMesh(filename.toUtf8().data());
 
   if (!ok)
     QMessageBox::warning(this, tr("Cannot open file"),

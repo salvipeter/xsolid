@@ -8,7 +8,7 @@
 #include <QtGui/QKeyEvent>
 
 #include <OpenMesh/Core/IO/MeshIO.hh>
-#include <OpenMesh/Tools/Smoother/JacobiLaplaceSmootherT.hh>
+#include <OpenMesh/Tools/Subdivider/Uniform/CatmullClarkT.hh>
 
 #include <GL/gle.h>
 
@@ -560,9 +560,8 @@ void MyViewer::generateMesh() {
   }
 
   if (subdivide) {
-    // TODO: subdivision step
-    std::cerr << "Non-quadrilateral model!" << std::endl;
-    return;
+    OpenMesh::Subdivider::Uniform::CatmullClarkT<CageMesh, double> subdivider;
+    subdivider(c, 1);
   }
 
   for (auto f : c.faces())
@@ -600,14 +599,21 @@ void MyViewer::generateMesh() {
     const auto &points = surf_mesh.points();
     const auto &tris = surf_mesh.triangles();
     std::vector<MyMesh::VertexHandle> handles, tri(3);
-    for (const auto &p : points)
+    for (const auto &p : points) {
+      // TODO: Here instead of adding a new vertex,
+      // first we should check if it is already in the mesh
+      // (and then use that handle).
+      // So we need something like "mesh.find_or_add_vertex(...)"
+      // OR: we should save the exact normal vectors for the boundary vertices
       handles.push_back(mesh.add_vertex(Vector(p.data())));
+    }
     for (const auto &t : tris) {
       for (size_t i = 0; i < 3; ++i)
         tri[i] = handles[t[i]];
       mesh.add_face(tri);
     }
   }
+  // OpenMesh::IO::write_mesh(mesh, "/tmp/xsolid.stl");
 }
 
 void MyViewer::mouseMoveEvent(QMouseEvent *e) {

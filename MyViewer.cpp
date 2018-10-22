@@ -31,7 +31,7 @@
 #endif
 
 MyViewer::MyViewer(QWidget *parent) :
-  QGLViewer(parent), resolution(10),
+  QGLViewer(parent), resolution(10), updating(false),
   mean_min(0.0), mean_max(0.0), cutoff_ratio(0.05),
   show_control_cage(true), show_boundary(true), show_solid(true), show_wireframe(false),
   visualization(Visualization::PLAIN)
@@ -318,6 +318,8 @@ void MyViewer::init() {
 }
 
 void MyViewer::draw() {
+  if (updating)
+    return;
   if (show_control_cage)
     drawControlCage();
   if (show_boundary)
@@ -546,6 +548,9 @@ Vec MyViewer::intersectLines(const Vec &ap, const Vec &ad, const Vec &bp, const 
 }
 
 void MyViewer::generateMesh() {
+  updating = true;
+  emit startComputation(tr("Generating mesh..."));
+
   auto c = cage;                // local copy for the subdivision step
 
   bool subdivide = false;
@@ -585,7 +590,9 @@ void MyViewer::generateMesh() {
   }
 
   mesh.clear();
+  size_t index = 0, nv = c.n_vertices();
   for (auto v : c.vertices()) {
+    emit midComputation(index++ * 100 / nv);
     if (c.is_boundary(v))
       continue;
     Geometry::CurveVector cv;
@@ -613,7 +620,9 @@ void MyViewer::generateMesh() {
       mesh.add_face(tri);
     }
   }
+  emit endComputation();
   // OpenMesh::IO::write_mesh(mesh, "/tmp/xsolid.stl");
+  updating = false;
 }
 
 void MyViewer::mouseMoveEvent(QMouseEvent *e) {

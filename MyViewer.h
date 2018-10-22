@@ -93,6 +93,7 @@ private:
   size_t resolution;
 
   // Visualization
+  bool updating;
   double mean_min, mean_max, cutoff_ratio;
   bool show_control_cage, show_boundary, show_solid, show_wireframe;
   enum class Visualization { PLAIN, MEAN, ISOPHOTES } visualization;

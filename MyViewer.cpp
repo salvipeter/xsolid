@@ -12,7 +12,9 @@
 
 #include <GL/gle.h>
 
-#include <surface-midpoint.hh>
+// #include <surface-midpoint.hh>
+#include <surface-side-based.hh>
+using SurfaceType = Transfinite::SurfaceSideBased;
 
 // #define BETTER_MEAN_CURVATURE
 
@@ -31,7 +33,7 @@
 #endif
 
 MyViewer::MyViewer(QWidget *parent) :
-  QGLViewer(parent), resolution(10), updating(false),
+  QGLViewer(parent), fullness(0.7), resolution(10), updating(false),
   mean_min(0.0), mean_max(0.0), cutoff_ratio(0.05),
   show_control_cage(true), show_boundary(true), show_solid(true), show_wireframe(false),
   visualization(Visualization::PLAIN)
@@ -516,6 +518,16 @@ void MyViewer::keyPressEvent(QKeyEvent *e) {
       show_wireframe = !show_wireframe;
       update();
       break;
+    case Qt::Key_Z:
+      fullness -= 0.1;
+      updateMesh();
+      update();
+      break;
+    case Qt::Key_X:
+      fullness += 0.1;
+      updateMesh();
+      update();
+      break;
     case Qt::Key_Equal:
       resolution += 5;
       updateMesh();
@@ -576,9 +588,15 @@ void MyViewer::generateMesh() {
     auto vh1 = c.to_vertex_handle(_heh);
     auto p = 0.5 * (c.point(vh0) + c.point(vh1));
 
-    auto q1 = c.data(c.face_handle(c.halfedge_handle(e, 0))).center;
-    auto q2 = c.data(c.face_handle(c.halfedge_handle(e, 1))).center;
-    Geometry::PointVector pv = {{q1[0], q1[1], q1[2]}, {p[0],  p[1],  p[2]}, {q2[0], q2[1], q2[2]}};
+    Vector q[5];
+    q[0] = c.data(c.face_handle(c.halfedge_handle(e, 0))).center;
+    q[4] = c.data(c.face_handle(c.halfedge_handle(e, 1))).center;
+    q[1] = q[0] * 2.0/3.0 + p * 1.0/3.0;
+    q[3] = q[4] * 2.0/3.0 + p * 1.0/3.0;
+    q[2] = (q[0] * 0.5 + q[4] * 0.5) * (1.0 - fullness) + p * fullness;
+    Geometry::PointVector pv;
+    for (size_t i = 0; i < 5; ++i)
+      pv.emplace_back(q[i][0], q[i][1], q[i][2]);
     auto curve = std::make_shared<Geometry::BSCurve>(pv);
     curves[e] = curve;
     boundaries.push_back(curve);
@@ -599,7 +617,7 @@ void MyViewer::generateMesh() {
     Geometry::CurveVector cv;
     for (auto e : c.ve_range(v))
       cv.push_back(curves[e]);
-    Transfinite::SurfaceMidpoint surf;
+    SurfaceType surf;
     surf.setCurves(cv);
     surf.setupLoop();
     surf.update();
@@ -655,6 +673,8 @@ QString MyViewer::helpString() const {
                "<li>&nbsp;C: Toggle control cage visualization</li>"
                "<li>&nbsp;S: Toggle solid (filled polygon) visualization</li>"
                "<li>&nbsp;W: Toggle wireframe visualization</li>"
+               "<li>&nbsp;Z: Lower the patch fullness</li>"
+               "<li>&nbsp;X: Raise the patch fullness</li>"
                "<li>&nbsp;-: Lower the patch resolution</li>"
                "<li>&nbsp;=: Raise the patch resolution</li>"
                "</ul>"

@@ -90,6 +90,7 @@ private:
   CageMesh cage;
   Geometry::CurveVector boundaries;
   MyMesh mesh;
+  double fullness;
   size_t resolution;
 
   // Visualization

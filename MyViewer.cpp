@@ -270,8 +270,6 @@ void MyViewer::updateVertexNormals() {
 }
 
 void MyViewer::updateMesh(bool update_mean_range) {
-  if (axes.shown)
-    return;
   generateMesh();
   mesh.request_face_normals(); mesh.request_vertex_normals();
   mesh.update_face_normals(); //mesh.update_vertex_normals();
@@ -548,9 +546,6 @@ Vec MyViewer::intersectLines(const Vec &ap, const Vec &ad, const Vec &bp, const 
 }
 
 void MyViewer::generateMesh() {
-  updating = true;
-  emit startComputation(tr("Generating mesh..."));
-
   auto c = cage;                // local copy for the subdivision step
 
   bool subdivide = false;
@@ -588,6 +583,12 @@ void MyViewer::generateMesh() {
     curves[e] = curve;
     boundaries.push_back(curve);
   }
+
+  if (axes.shown)
+    return;
+
+  updating = true;
+  emit startComputation(tr("Generating mesh..."));
 
   mesh.clear();
   size_t index = 0, nv = c.n_vertices();

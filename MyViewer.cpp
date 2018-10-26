@@ -13,6 +13,7 @@
 #include <GL/gle.h>
 
 // #include <surface-midpoint.hh>
+// using SurfaceType = Transfinite::SurfaceMidpoint;
 #include <surface-side-based.hh>
 using SurfaceType = Transfinite::SurfaceSideBased;
 
@@ -360,7 +361,7 @@ void MyViewer::draw() {
   }
 
   if (show_solid && show_wireframe) {
-    glPolygonMode(GL_FRONT, GL_LINE);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
     glColor3d(0.0, 0.0, 0.0);
     glDisable(GL_LIGHTING);
     for (auto f : mesh.faces()) {
@@ -423,6 +424,7 @@ void MyViewer::drawBoundary() const {
 }
 
 void MyViewer::drawAxes() const {
+  glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
   const Vec &p = axes.position;
   glColor3d(1.0, 0.0, 0.0);
   drawArrow(p, p + Vec(axes.size, 0.0, 0.0), axes.size / 50.0);
@@ -609,9 +611,30 @@ void MyViewer::generateMesh() {
   emit startComputation(tr("Generating mesh..."));
 
   mesh.clear();
-  size_t index = 0, nv = c.n_vertices();
+  
+  std::map<CageMesh::FaceHandle, MyMesh::VertexHandle> corner_vertices;
+  for (auto f : c.faces())
+    corner_vertices[f] = mesh.add_vertex(c.data(f).center);
+
+  using HandleVector = std::vector<MyMesh::VertexHandle>;
+  std::map<CageMesh::EdgeHandle, HandleVector> curve_vertices;
+  for (auto e : c.edges()) {
+    if (c.is_boundary(e))
+      continue;
+    HandleVector hv;
+    hv.push_back(corner_vertices[c.face_handle(c.halfedge_handle(e, 0))]);
+    for (size_t i = 1; i < resolution; ++i) {
+      double u = (double)i / resolution;
+      auto p = curves[e]->eval(u);
+      hv.push_back(mesh.add_vertex(Vector(p.data())));
+    }
+    hv.push_back(corner_vertices[c.face_handle(c.halfedge_handle(e, 1))]);
+    curve_vertices[e] = hv;
+  }
+
+  size_t count = 0, nv = c.n_vertices();
   for (auto v : c.vertices()) {
-    emit midComputation(index++ * 100 / nv);
+    emit midComputation(count++ * 100 / nv);
     if (c.is_boundary(v))
       continue;
     Geometry::CurveVector cv;
@@ -624,14 +647,17 @@ void MyViewer::generateMesh() {
     auto surf_mesh = surf.eval(resolution);
     const auto &points = surf_mesh.points();
     const auto &tris = surf_mesh.triangles();
-    std::vector<MyMesh::VertexHandle> handles, tri(3);
-    for (const auto &p : points) {
-      // TODO: Here instead of adding a new vertex,
-      // first we should check if it is already in the mesh
-      // (and then use that handle).
-      // So we need something like "mesh.find_or_add_vertex(...)"
-      // OR: we should save the exact normal vectors for the boundary vertices
-      handles.push_back(mesh.add_vertex(Vector(p.data())));
+    HandleVector handles, tri(3);
+    size_t index = points.size() - cv.size() * resolution;
+    for (size_t i = 0; i < index; ++i)
+      handles.push_back(mesh.add_vertex(Vector(points[i].data())));
+    for (auto e : c.ve_range(v)) {
+      auto &hv = curve_vertices[e];
+      if ((Vector(points[index].data()) - mesh.point(hv[0])).norm() > Geometry::epsilon)
+        std::reverse(hv.begin(), hv.end());
+      for (size_t i = 0; i < resolution; ++i)
+        handles.push_back(hv[i]);
+      index += resolution;
     }
     for (const auto &t : tris) {
       for (size_t i = 0; i < 3; ++i)
@@ -639,8 +665,8 @@ void MyViewer::generateMesh() {
       mesh.add_face(tri);
     }
   }
+
   emit endComputation();
-  // OpenMesh::IO::write_mesh(mesh, "/tmp/xsolid.stl");
   updating = false;
 }
 

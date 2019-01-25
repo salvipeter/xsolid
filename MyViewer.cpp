@@ -12,10 +12,8 @@
 
 #include <GL/gle.h>
 
-// #include <surface-midpoint.hh>
-// using SurfaceType = Transfinite::SurfaceMidpoint;
-#include <surface-side-based.hh>
-using SurfaceType = Transfinite::SurfaceSideBased;
+#include <surface-midpoint.hh>
+using SurfaceType = Transfinite::SurfaceMidpoint;
 
 // #define BETTER_MEAN_CURVATURE
 
@@ -34,7 +32,7 @@ using SurfaceType = Transfinite::SurfaceSideBased;
 #endif
 
 MyViewer::MyViewer(QWidget *parent) :
-  QGLViewer(parent), fullness(0.7), resolution(10), updating(false),
+  QGLViewer(parent), fullness(0.5), resolution(10), updating(false),
   mean_min(0.0), mean_max(0.0), cutoff_ratio(0.05),
   show_control_cage(true), show_boundary(true), show_solid(true), show_wireframe(false),
   visualization(Visualization::PLAIN)
@@ -591,11 +589,13 @@ void MyViewer::generateMesh() {
     auto p = 0.5 * (c.point(vh0) + c.point(vh1));
 
     Vector q[5];
+    double x1 = (0.4 * fullness + 0.6) * fullness;
+    double x2 = (-2.0 / 7.0 * fullness + 9.0 / 7.0) * fullness;
     q[0] = c.data(c.face_handle(c.halfedge_handle(e, 0))).center;
     q[4] = c.data(c.face_handle(c.halfedge_handle(e, 1))).center;
-    q[1] = q[0] * 2.0/3.0 + p * 1.0/3.0;
-    q[3] = q[4] * 2.0/3.0 + p * 1.0/3.0;
-    q[2] = (q[0] * 0.5 + q[4] * 0.5) * (1.0 - fullness) + p * fullness;
+    q[1] = q[0] * (1 - x1) + p * x1;
+    q[3] = q[4] * (1 - x1) + p * x1;
+    q[2] = (q[0] * (1 - x2) + p * x2) * 0.5 + (q[4] * (1 - x2) + p * x2) * 0.5;
     Geometry::PointVector pv;
     for (size_t i = 0; i < 5; ++i)
       pv.emplace_back(q[i][0], q[i][1], q[i][2]);
@@ -644,20 +644,63 @@ void MyViewer::generateMesh() {
     surf.setCurves(cv);
     surf.setupLoop();
     surf.update();
+    size_t n = cv.size();
     auto surf_mesh = surf.eval(resolution);
     const auto &points = surf_mesh.points();
     const auto &tris = surf_mesh.triangles();
+
+    auto orientedEdgeCurve =
+      [&](CageMesh::EdgeHandle e, size_t point_index) -> HandleVector & {
+        auto &hv = curve_vertices[e];
+        if ((Vector(points[point_index].data()) - mesh.point(hv[0])).norm() > Geometry::epsilon)
+          std::reverse(hv.begin(), hv.end());
+        return hv;
+      };
+    
     HandleVector handles, tri(3);
-    size_t index = points.size() - cv.size() * resolution;
-    for (size_t i = 0; i < index; ++i)
-      handles.push_back(mesh.add_vertex(Vector(points[i].data())));
-    for (auto e : c.ve_range(v)) {
-      auto &hv = curve_vertices[e];
-      if ((Vector(points[index].data()) - mesh.point(hv[0])).norm() > Geometry::epsilon)
-        std::reverse(hv.begin(), hv.end());
-      for (size_t i = 0; i < resolution; ++i)
-        handles.push_back(hv[i]);
-      index += resolution;
+    if (n == 3) {
+      CageMesh::VertexEdgeIter e(c, v);
+      auto e1 = *e++, e2 = *e++, e3 = *e;
+      size_t index = 0;
+      auto &hv1 = orientedEdgeCurve(e1, index), &hv3 = orientedEdgeCurve(e3, index);
+      handles.push_back(hv1[0]); ++index;
+      for (size_t j = 1; j < resolution; ++j) {
+        handles.push_back(hv1[j]); ++index;
+        for (size_t k = 1; k < j; ++k, ++index)
+          handles.push_back(mesh.add_vertex(Vector(points[index].data())));
+        handles.push_back(hv3[j]); ++index;
+      }
+      auto &hv2 = orientedEdgeCurve(e2, index);
+      for (size_t i = 0; i <= resolution; ++i)
+        handles.push_back(hv2[i]);
+    } else if (n == 4) {
+      CageMesh::VertexEdgeIter e(c, v);
+      auto e1 = *e++, e2 = *e++, e3 = *e++, e4 = *e;
+      size_t index = 0;
+      auto &hv1 = orientedEdgeCurve(e1, index);
+      auto &hv2 = orientedEdgeCurve(e2, index), &hv4 = orientedEdgeCurve(e4, index + resolution);
+      for (size_t i = 0; i <= resolution; ++i)
+        handles.push_back(hv1[i]);
+      index += resolution + 1;
+      for (size_t j = 1; j < resolution; ++j) {
+        handles.push_back(hv2[j]); ++index;
+        for (size_t k = 1; k < resolution; ++k, ++index)
+          handles.push_back(mesh.add_vertex(Vector(points[index].data())));
+        handles.push_back(hv4[j]); ++index;
+      }
+      auto &hv3 = orientedEdgeCurve(e3, index);
+      for (size_t i = 0; i <= resolution; ++i)
+        handles.push_back(hv3[i]);
+    } else { // n > 4
+      size_t index = points.size() - n * resolution;
+      for (size_t i = 0; i < index; ++i)
+        handles.push_back(mesh.add_vertex(Vector(points[i].data())));
+      for (auto e : c.ve_range(v)) {
+        auto &hv = orientedEdgeCurve(e, index);
+        for (size_t i = 0; i < resolution; ++i)
+          handles.push_back(hv[i]);
+        index += resolution;
+      }
     }
     for (const auto &t : tris) {
       for (size_t i = 0; i < 3; ++i)

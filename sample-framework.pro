@@ -11,6 +11,6 @@ LIBS += -L$${TRANSFINITE}/release/geom -L$${TRANSFINITE}/release/transfinite
 HEADERS = MyWindow.h MyViewer.h MyViewer.hpp
 SOURCES = MyWindow.cpp MyViewer.cpp main.cpp
 
-LIBS *= -lQGLViewer -L/usr/lib/OpenMesh -lOpenMeshCore -lOpenMeshTools -ltransfinite -lgeom -lgle -lGL -lGLU
+LIBS *= -lQGLViewer-qt5 -L/usr/lib/OpenMesh -lOpenMeshCore -lOpenMeshTools -ltransfinite -lgeom -lgle -lGL -lGLU
 
 RESOURCES = sample-framework.qrc

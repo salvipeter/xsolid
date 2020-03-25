@@ -1,7 +1,7 @@
 # -*- mode: Makefile -*-
 
 TARGET = sample-framework
-CONFIG *= c++14 qt opengl
+CONFIG *= c++17 qt opengl
 QT += gui widgets opengl xml
 
 TRANSFINITE = /home/salvi/project/transfinite
